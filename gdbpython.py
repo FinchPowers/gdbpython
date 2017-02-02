@@ -6,8 +6,9 @@
 
 import gdb
 import sys
+from io import StringIO
 
-def s(output=sys.stdout):
+def s(print_stdlib_steps=True, output=sys.stdout):
     """
     Keeps stepping as long as the context is within /usr/include/c++.
     """
@@ -15,7 +16,6 @@ def s(output=sys.stdout):
     while True:
         gdb.execute('s', False, True)
         res = gdb.execute('f', False, True)
-        output.write(res)
         lines = res.split('\n')
         parts = lines[0].split('/')
 
@@ -31,19 +31,69 @@ def s(output=sys.stdout):
 
         path = '/' + '/'.join(parts[1:])
         if path.find('/c++/') != -1:
+            if print_stdlib_steps:
+                if res == '':
+                    raise Exception('Empty line a')
+                output.write(res)
             in_skip = True
             continue
+
         break
 
-def trace(filename):
+    output.write(res)
+
+class StepLineGetter(object):
+    string = StringIO()
+
+    @staticmethod
+    def get_step_line():
+        StepLineGetter.string.truncate(0)
+        s(False, StepLineGetter.string)
+        StepLineGetter.string.seek(0)
+        line = StepLineGetter.string.readline()
+        if line == '':
+            raise Exception('Empty ??')
+        return StepLineGetter.string.readline().split(' ')[-1]
+
+
+
+# TODO handle end of prog
+def trace_write(filename, steps):
     """
-    Steps forever, printing every output not from /usr/include/c++ to the
+    Steps n steps, printing every output not from .../c++/... to the
     filename provided.
     """
     with open(filename, 'wt') as output:
         try:
-            while True:
-                s(output)
+            for _ in range(steps):
+                step_line = StepLineGetter.get_step_line()
+                if step_line == '':
+                    raise RuntimeError('Empty step line')
+                output.write(step_line)
+        except gdb.error as e:
+            print(e.args)
+
+
+def trace_compare(filename):
+    """
+    Opens file filename, and steps as long as the steps are the same as in the
+    file or when the end of the file is reached.
+    """
+    with open(filename, 'rt') as in_file:
+
+        try:
+            line_num = 0
+            for file_line in in_file:
+                line_num += 1
+                step_line = StepLineGetter.get_step_line()
+                if step_line != file_line:
+                    print("Mismatch at file line {}.".format(line_num))
+                    print("File step   : " + file_line)
+                    print("Current step: " + step_line)
+                    break
+            else:
+                print("No mismatch found, done iterating through file.")
+
         except gdb.error as e:
             print(e.args)
 
